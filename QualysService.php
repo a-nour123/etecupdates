@@ -61,6 +61,7 @@ class QualysService
     public function checkCredentials(): array
     {
         try {
+            // show_last=1: API returns only the most recent scan (valid values are 0|1)
             $response = Http::withHeaders(['X-Requested-With' => 'Curl Sample'])
                 ->withBasicAuth($this->username, $this->password)
                 ->get($this->url('/api/2.0/fo/scan/'), [
@@ -74,15 +75,18 @@ class QualysService
             }
 
             $body = $response->body();
-            $invalid = $response->status() === 401
-                || str_contains($body, 'Invalid credentials')
-                || str_contains($body, 'Invalid Credentials');
+            $status = $response->status();
+            $invalid = $status === 401
+                || str_contains($body ?? '', 'Invalid credentials')
+                || str_contains($body ?? '', 'Invalid Credentials');
+
+            $message = $invalid
+                ? 'Invalid credentials (401 Unauthorized). Check username and password and ensure the user has API access. Please refer to the Login FAQ for assistance.'
+                : ($body ?: "API request failed (HTTP {$status}).");
 
             return [
                 'ok' => false,
-                'message' => $invalid
-                    ? 'Invalid credentials. Please refer to the Login FAQ for assistance.'
-                    : ($body ?: 'API request failed.'),
+                'message' => $message,
                 'faq_link' => self::QUALYS_LOGIN_FAQ,
             ];
         } catch (\Exception $e) {
@@ -424,12 +428,15 @@ class QualysService
         }
 
         try {
+            // Scan list params per Qualys API: action=list (required), state=Finished, show_last=0|1 only.
+            // launched_after_datetime: scans in last 30 days (YYYY-MM-DD UTC). Omit show_last to get all in window.
+            $launchedAfter = gmdate('Y-m-d', strtotime('-30 days'));
             $scanListResponse = Http::withHeaders(['X-Requested-With' => 'Curl Sample'])
                 ->withBasicAuth($this->username, $this->password)
                 ->get($this->url('/api/2.0/fo/scan/'), [
                     'action' => 'list',
                     'state' => 'Finished',
-                    'show_last' => 50,
+                    'launched_after_datetime' => $launchedAfter,
                 ]);
 
             if (!$scanListResponse->successful()) {
